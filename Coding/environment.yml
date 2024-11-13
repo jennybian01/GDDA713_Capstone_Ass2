@@ -1,0 +1,11 @@
+# environment.yml
+name: shiny_env
+dependencies:
+  - python=3.9  # 或更高版本，确保兼容
+  - pandas
+  - matplotlib
+  - statsmodels
+  - numpy
+  - pip
+  - pip:
+      - shiny
