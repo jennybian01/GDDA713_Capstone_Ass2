@@ -1,5 +1,8 @@
-from shiny import App, ui
+from shiny import App, ui, render, req
+import openpyxl
+import pandas as pd
 
+# Define CSS styles
 css = """
 #tab {
     width: 100%; /* 设置导航栏宽度为页面的1/3 */
@@ -29,15 +32,21 @@ css = """
 }
 """
 
+# Define the UI
 app_ui = ui.page_fluid(
     ui.card_header("Auckland Air Quality Monitoring Application",
-                  style="background-color: #5081c8; color: white; padding: 60px; text-align: center; font-size: 40px;"),
+                   style="background-color: #5081c8; color: white; padding: 60px; text-align: center; font-size: 40px;"),
     
-    ui.navset_pill_list(  # <<
+    ui.navset_pill_list(
         ui.nav_panel("Upload", 
                      "Please upload datasets",
-                     ui.input_file("file1", "Choose a file to upload:", multiple=True),
-                     ui.output_table("dataPreview")),
+                     ui.input_file("file1", "Choose an Excel file to upload: PMF_Raw Date", multiple=True),
+                     ui.output_table("dataPreview1"),
+                     ui.input_file("file2", "Choose an Excel file to upload: Trend Analysis-PM10", multiple=True),
+                     ui.output_table("dataPreview2"),
+                     ui.input_file("file3", "Choose an third Excel file to upload: Trend Analysis- Sources", multiple=True),
+                     ui.output_table("dataPreview3")),
+
         ui.nav_panel("Trend Analysis","Trend analysis",
                      ui.navset_tab(
                          ui.nav_panel("Monthly PM10","Monthly PM10 Contributions Over Time"),
@@ -53,11 +62,43 @@ app_ui = ui.page_fluid(
                      ui.download_button("downloadReport","Download Report"),
                      ui.output_table("reportPreview")),
         id="tab",
-    ),  # <<
-    ui.tags.style(css)  # 添加CSS样式
+    ),
+    ui.tags.style(css)  # Add CSS styles
 )
 
+
 def server(input, output, session):
-    pass
+    @output
+    @render.table
+    def dataPreview1():
+        req(input.file1())
+        
+        file_content = input.file1()
+        if file_content:
+            excel_path = file_content[0]['datapath']
+            df1 = pd.read_excel(excel_path)
+            return df1.head(10)  # 默认显示前10行
+
+    @output
+    @render.table
+    def dataPreview2():
+        req(input.file2())
+        
+        file_content = input.file2()
+        if file_content:
+            excel_path = file_content[0]['datapath']
+            df2 = pd.read_excel(excel_path)
+            return df2.head(10)  # 默认显示前10行
+
+    @output
+    @render.table
+    def dataPreview3():
+        req(input.file3())
+        
+        file_content = input.file3()
+        if file_content:
+            excel_path = file_content[0]['datapath']
+            df3 = pd.read_excel(excel_path)
+            return df3.head(10)  # 默认显示前10行
 
 app = App(app_ui, server)
