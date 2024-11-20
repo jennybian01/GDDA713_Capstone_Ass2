@@ -1,104 +1,75 @@
-from shiny import App, ui, render, req
-import openpyxl
+from shiny import App, render, ui
 import pandas as pd
+from P1 import process_data_and_plot  # type: ignore # Assuming P1 coding is in a separate file named P1.py
 
-# Define CSS styles
-css = """
-#tab {
-    width: 100%; /* 设置导航栏宽度为页面的1/3 */
-}
-
-#tab .nav-item {
-    background-color: #f9f9f9;
-    padding: 20px;
-    border-radius: 15px;
-    margin-bottom: 20px;
-    text-align: center; /* 文字居中 */
-}
-
-#tab .nav-link {
-    color: #5081c8;
-    font-weight: bold; /* 加粗文字 */
-}
-
-#tab .nav-link.active {
-    background-color: #e7e7e7;
-}
-
-#tab .tab-content {
-    background-color: #f9f9f9;
-    padding: 10px;
-    border-radius: 5px;
-}
-"""
-
-# Define the UI
+# Define the Shiny app structure
 app_ui = ui.page_fluid(
-    ui.card_header("Auckland Air Quality Monitoring Application",
-                   style="background-color: #5081c8; color: white; padding: 60px; text-align: center; font-size: 40px;"),
-    
-    ui.navset_pill_list(
-        ui.nav_panel("Upload", 
-                     "Please upload datasets",
-                     ui.input_file("file1", "Choose an Excel file to upload: PMF_Raw Date", multiple=True),
-                     ui.output_table("dataPreview1"),
-                     ui.input_file("file2", "Choose an Excel file to upload: Trend Analysis-PM10", multiple=True),
-                     ui.output_table("dataPreview2"),
-                     ui.input_file("file3", "Choose an third Excel file to upload: Trend Analysis- Sources", multiple=True),
-                     ui.output_table("dataPreview3")),
-
-        ui.nav_panel("Trend Analysis","Trend analysis",
-                     ui.navset_tab(
-                         ui.nav_panel("Monthly PM10","Monthly PM10 Contributions Over Time"),
-                         ui.nav_panel("Yearly All Factors","Yearly Contributions of All Factors Over Time"),
-                     )),
-        ui.nav_panel("Visualization", "Pie Chart & Source Contribution Plot",
-                    ui.navset_tab(
-                        ui.nav_panel("Pie Chart","Source Contribution Pie Chart"),
-                        ui.nav_panel("Source Contribution Plot","Source Contribution Plot")
-                    )),
-        ui.nav_panel("Report", 
-                     "Report and download",
-                     ui.download_button("downloadReport","Download Report"),
-                     ui.output_table("reportPreview")),
-        id="tab",
-    ),
-    ui.tags.style(css)  # Add CSS styles
+    ui.tabset_panel(
+        ui.tab_panel("Upload Page", 
+                     ui.input_file("upload", "Upload Excel File", accept=[".xlsx"]),
+                     ui.output_table("preview_table")),
+        ui.tab_panel("Trend Analysis", 
+                     ui.output_text("trend_analysis_message"),
+                     ui.output_plot("trend_plot")),
+        ui.tab_panel("Visualization", 
+                     ui.output_text("visualization_message")),
+        ui.tab_panel("Report", 
+                     ui.output_text("report_message"))
+    )
 )
 
-
 def server(input, output, session):
-    @output
-    @render.table
-    def dataPreview1():
-        req(input.file1())
-        
-        file_content = input.file1()
-        if file_content:
-            excel_path = file_content[0]['datapath']
-            df1 = pd.read_excel(excel_path)
-            return df1.head(10)  # 默认显示前10行
+    # Reactive variable to store the uploaded file data
+    uploaded_file_data = None
 
     @output
     @render.table
-    def dataPreview2():
-        req(input.file2())
-        
-        file_content = input.file2()
-        if file_content:
-            excel_path = file_content[0]['datapath']
-            df2 = pd.read_excel(excel_path)
-            return df2.head(10)  # 默认显示前10行
+    def preview_table():
+        """
+        Render the first 10 rows of the uploaded Excel file.
+        """
+        if input.upload() is None:
+            return pd.DataFrame({"Message": ["No file uploaded yet."]})
+        global uploaded_file_data
+        file_info = input.upload()
+        uploaded_file_data = pd.read_excel(file_info[0]["datapath"], sheet_name=0)
+        return uploaded_file_data.head(10)
 
     @output
-    @render.table
-    def dataPreview3():
-        req(input.file3())
-        
-        file_content = input.file3()
-        if file_content:
-            excel_path = file_content[0]['datapath']
-            df3 = pd.read_excel(excel_path)
-            return df3.head(10)  # 默认显示前10行
+    @render.plot
+    def trend_plot():
+        """
+        Render the trend analysis plot when the button is clicked.
+        """
+        if uploaded_file_data is None:
+            return None  # Avoids errors if no data has been uploaded yet
+        # Process data and generate plot using the P1 branch function
+        return process_data_and_plot(uploaded_file_data)
+
+    @output
+    @render.text
+    def trend_analysis_message():
+        """
+        Provide a message for the Trend Analysis page.
+        """
+        if uploaded_file_data is None:
+            return "Please upload a dataset first to analyze trends."
+        return "Trend Analysis is ready!"
+
+    @output
+    @render.text
+    def visualization_message():
+        """
+        Provide a message for the Visualization page.
+        """
+        return "Visualization functionality under development."
+
+    @output
+    @render.text
+    def report_message():
+        """
+        Provide a message for the Report page.
+        """
+        return "Report generation functionality under development."
 
 app = App(app_ui, server)
