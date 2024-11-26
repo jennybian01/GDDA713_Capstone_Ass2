@@ -1,6 +1,10 @@
 import pandas as pd
 import sqlite3
 import os
+from matplotlib import pyplot as plt
+import matplotlib.dates as mdates
+import numpy as np
+import statsmodels.api as sm
 
 def process_data_and_plot(dataframe):
     """
@@ -155,3 +159,28 @@ def fetch_contributions(db_filename):
     df = pd.read_sql_query(query, conn)
     conn.close()
     return df
+
+
+def plot_monthly_pm10_trend(df):
+    if df.empty:
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.set_title('No Data Available')
+        ax.set_xlabel('Year-Month')
+        ax.set_ylabel('PM10 Average Contributions')
+        return fig  
+
+    df['date'] = pd.to_datetime(df['date'])
+    df['year'] = df['date'].dt.year
+    df['month'] = df['date'].dt.month
+    monthly_avg = df.groupby(['year', 'month'])['total_pm10'].mean().reset_index()
+    monthly_avg['month_year'] = monthly_avg['year'].astype(str) + '-' + monthly_avg['month'].astype(str).str.zfill(2)
+    
+    fig, ax = plt.subplots(figsize=(12, 6))  
+    ax.plot(monthly_avg['month_year'], monthly_avg['total_pm10'], marker='o', linestyle='-', color='#66b3ff', markerfacecolor='none', markeredgewidth=2)
+    ax.set_title('Monthly PM10 Contributions Over Time')
+    ax.set_xlabel('Year-Month')
+    ax.set_ylabel('PM10 Average Contributions')
+    ax.tick_params(axis='x', rotation=45)  
+    ax.grid(axis='y')
+    ax.legend(['PM10 Average'])
+    return fig  
