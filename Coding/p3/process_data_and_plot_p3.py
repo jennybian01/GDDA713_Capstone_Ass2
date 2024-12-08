@@ -9,8 +9,7 @@ import panel as pn
 from openpyxl import Workbook, load_workbook
 from shiny import App
 import matplotlib.pyplot as plt
-from shiny import App, render, ui
-from app import app_ui, server
+ 
 
 def clean_excel_data_p3(input_file, output_file):
     try:
@@ -23,7 +22,7 @@ def clean_excel_data_p3(input_file, output_file):
     except Exception as e:
         print(f"An error occurred while cleaning and saving the data: {e}")
         return None
-
+    
 def create_output_file_new(output_file_new):
     try:
         # create new workbook
@@ -50,126 +49,84 @@ def create_output_file_new(output_file_new):
     except Exception as e:
         print(f"An error occurred while creating the new workbook: {e}")
         return None, None
-   
+    
 def copy_speciation_cloumn(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
+
+        try:
+            # Load the existing workbook
+            wb = load_workbook(output_file)
+            ws = wb.active
+
+            # Copy data from ws to ws_new
+            for i in range(57, 77):
+                value = ws[f'A{i}'].value
+                ws_new[f'A{i - 55}'] = value
+
+            # Save into new workbook
+            wb_new.save(output_file_new)
+            print(f"Data copied successfully from {output_file} to {output_file_new}")
+            return wb_new, ws_new
+        except Exception as e:
+            print(f"An error occurred while copying data: {e}")
+            return None, None
+
+def process_data(output_file, output_file_new, wb_new, ws_new):
     try:
-        # Load the existing workbook
+        #load the existing workbook
         wb = load_workbook(output_file)
         ws = wb.active
 
-        # Copy data from ws to ws_new
-        for i in range(57, 77):
-            value = ws[f'A{i}'].value
-            ws_new[f'A{i - 55}'] = value
 
-        # Save into new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied successfully from {output_file} to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying data: {e}")
-        return None, None
-
-def copy_Soil_road_dust(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook
-        wb = load_workbook(output_file)
-        ws = wb.active  
-
-        # Get the divisor value which is in cell B56
+        # Soil Road Dust data (start_row 57, end_row 76, divisor_cell B56)
         divisor = ws['B56'].value
 
-        # Calculate the values for columns B, C, D, and E in the new workbook using the values from output_file
-        for i in range(57, 77):
-            # Get the values from columns B, N, M, and O in output_file
+        for i in range(57, 77):  # Loop through rows 57 to 76
             value_b = ws[f'B{i}'].value
             value_n = ws[f'N{i}'].value
             value_m = ws[f'M{i}'].value
             value_o = ws[f'O{i}'].value
 
-            # Calculate the results to be written in the new workbook
-            # Avoid division by zero
             result_b = (value_b / divisor) / 1000 if divisor else None
             result_n = (value_n / divisor) / 1000 if divisor else None
             result_m = (value_m / divisor) / 1000 if divisor else None
             result_o = (value_o / divisor) / 1000 if divisor else None
 
-            # Write the results to columns B, C, D, and E in the new workbook starting from row 2
-            ws_new[f'B{i-55}'] = result_b
-            ws_new[f'C{i-55}'] = result_n
-            ws_new[f'D{i-55}'] = result_m
-            ws_new[f'E{i-55}'] = result_o
+            ws_new[f'B{i-56}'] = result_b
+            ws_new[f'C{i-56}'] = result_n
+            ws_new[f'D{i-56}'] = result_m
+            ws_new[f'E{i-56}'] = result_o
 
-        # Copy values from output_file column B (from B225 to B244) to the new workbook column F (from F2 to F21)
+        # Copy values from output_file (B225 to B244) to new workbook (F2 to F21)
         for i in range(225, 245):
-            # Get the value from column B in output_file
             value = ws[f'B{i}'].value
-            # Write the value to column F in the new workbook
             ws_new[f'F{i-223}'] = value
-
-        # Save the updated new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied and calculated successfully to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-
-def copy_Sulphate_Marine_Diesel(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook for output_file
-        wb = load_workbook(output_file)
-        ws = wb.active
-
-        # Get the divisor value which is in cell B200
+################
+        # Sulphate Marine Diesel data (start_row 201, end_row 220, divisor_cell B200)
         divisor_2 = ws['B200'].value
 
-        # Calculate the values for columns G, H, I, and J in output_file_new using the values from output_file
-        for i in range(1, 21):  # Loop from 1 to 20 to fill rows 2 to 21 in output_file_new
-            # Get the values from columns B, N, M, and O in output_file (B201 to B220, N201 to N220, M201 to M220, O201 to O220)
-            value_g = ws[f'B{200+i}'].value
-            value_h = ws[f'N{200+i}'].value
-            value_i = ws[f'M{200+i}'].value
-            value_j = ws[f'O{200+i}'].value
+        for i in range(1, 21):  # Loop through rows 1 to 20 for Sulphate Marine Diesel
+            value_g = ws[f'B{200 + i}'].value
+            value_h = ws[f'N{200 + i}'].value
+            value_i = ws[f'M{200 + i}'].value
+            value_j = ws[f'O{200 + i}'].value
 
-            # Calculate the results to be written in output_file_new
             result_g = (value_g / divisor_2) / 1000 if divisor_2 else None
             result_h = (value_h / divisor_2) / 1000 if divisor_2 else None
             result_i = (value_i / divisor_2) / 1000 if divisor_2 else None
             result_j = (value_j / divisor_2) / 1000 if divisor_2 else None
 
-            # Write the results to columns G, H, I, and J in output_file_new starting from row 2
             ws_new[f'G{i+1}'] = result_g
             ws_new[f'H{i+1}'] = result_h
             ws_new[f'I{i+1}'] = result_i
             ws_new[f'J{i+1}'] = result_j
 
-        # Copy values from output_file column B (from B369 to B388) to output_file_new column K (from K2 to K21)
+        # Copy values from output_file (B369 to B388) to new workbook (K2 to K21)
         for i in range(369, 389):
-            # Get the value from column B in output_file
             value = ws[f'B{i}'].value
-            # Write the value to column K in output_file_new
             ws_new[f'K{i-367}'] = value
 
-        # Save the updated output_file_new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied and calculated successfully to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-
-def copy_Diesel_vehicles(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook for output_file
-        wb = load_workbook(output_file)
-        ws = wb.active
-
-        # Get the divisor value which is in cell B104
+#######################            
+        # Diesel_vehicles Get the divisor value which is in cell B104
         divisor_3 = ws['B104'].value
 
         # Calculate the values for columns L, M, N, and O in output_file_new using the values from output_file
@@ -198,23 +155,8 @@ def copy_Diesel_vehicles(output_file, output_file_new, wb_new, ws_new):
             value = ws[f'B{i}'].value
             # Write the value to column P in output_file_new
             ws_new[f'P{i-271}'] = value
-
-        # Save the updated output_file_new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied and calculated successfully to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-
-def copy_Sea_Salt(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook for output_file
-        wb = load_workbook(output_file)
-        ws = wb.active
-
-        # Get the divisor value which is in cell B80
+######################
+        # Sea Salt Get the divisor value which is in cell B80
         divisor_4 = ws['B80'].value
 
         # Calculate the values for columns Q, R, S, and T in output_file_new using the values from output_file
@@ -243,23 +185,8 @@ def copy_Sea_Salt(output_file, output_file_new, wb_new, ws_new):
             value = ws[f'B{i}'].value
             # Write the value to column U in output_file_new
             ws_new[f'U{i-247}'] = value
-
-        # Save the updated output_file_new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied and calculated successfully to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-  
-def copy_Biomass_burning(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook for output_file
-        wb = load_workbook(output_file)
-        ws = wb.active
-
-        # Get the divisor value which is in cell B128
+##########################
+        # Biomass_burning Get the divisor value which is in cell B128
         divisor_5 = ws['B128'].value
 
         # Calculate the values for columns V, W, X, and Y in output_file_new using the values from output_file
@@ -288,23 +215,8 @@ def copy_Biomass_burning(output_file, output_file_new, wb_new, ws_new):
             value = ws[f'B{i}'].value
             # Write the value to column Z in output_file_new
             ws_new[f'Z{i-295}'] = value
-
-        # Save the updated output_file_new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied and calculated successfully to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-   
-def copy_Petrol_vehicles(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook for output_file
-        wb = load_workbook(output_file)
-        ws = wb.active
-
-        # Get the divisor value which is in cell B176
+#################################
+        # Petrol vehicle Get the divisor value which is in cell B176
         divisor_6 = ws['B176'].value
 
         # Calculate the values for columns AA, AB, AC, and AD in output_file_new using the values from output_file
@@ -333,23 +245,8 @@ def copy_Petrol_vehicles(output_file, output_file_new, wb_new, ws_new):
             value = ws[f'B{i}'].value
             # Write the value to column AE in output_file_new
             ws_new[f'AE{i-343}'] = value
-
-        # Save the updated output_file_new workbook
-        wb_new.save(output_file_new)
-        print(f"Data copied and calculated successfully to {output_file_new}")
-        return wb_new, ws_new
-    except Exception as e:
-        print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-
-def copy_Construction(output_file, output_file_new, wb_new, ws_new):
-    from app import app_ui, server
-    try:
-        # Load the existing workbook for output_file
-        wb = load_workbook(output_file)
-        ws = wb.active
-
-        # Get the divisor value which is in cell B152
+###############################
+        # Construction Get the divisor value which is in cell B152
         divisor_7 = ws['B152'].value
 
         # Calculate the values for columns AF, AG, AH, and AI in output_file_new using the values from output_file
@@ -378,15 +275,15 @@ def copy_Construction(output_file, output_file_new, wb_new, ws_new):
             value = ws[f'B{i}'].value
             # Write the value to column AJ in output_file_new
             ws_new[f'AJ{i-319}'] = value
+########################
 
-        # Save the updated output_file_new workbook
+        # Save the updated new workbook
         wb_new.save(output_file_new)
         print(f"Data copied and calculated successfully to {output_file_new}")
         return wb_new, ws_new
     except Exception as e:
         print(f"An error occurred while copying and calculating data: {e}")
-        return None, None
-    
+        return None, None       
 
 # Function to prepare data for database insertion
 def data_preparation(df):
@@ -418,16 +315,12 @@ def data_preparation(df):
    
    
 # Function to drop the existing database file
-def drop_database_p3(db_filename2):
+def create_database_p3(db_filename2):
     if os.path.exists(db_filename2):
         os.remove(db_filename2)
         print(f"Database file {db_filename2} has been deleted.")
     else:
         print(f"Database file {db_filename2} does not exist.")
-        
-def create_database_and_table_p3(db_filename2):
-    if os.path.exists(db_filename2):
-        os.remove(db_filename2)
     
     # Connect to the SQLite database
     conn = sqlite3.connect(db_filename2)
@@ -441,7 +334,7 @@ def create_database_and_table_p3(db_filename2):
     )
     ''')
 
-    # Create PollutionSources table
+    # Create Pollution Sourece table
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS PollutionSources (
         SourceID TEXT PRIMARY KEY,
@@ -626,12 +519,12 @@ def plot_Pollution_Contribution(df_pollution_contribution):
         ax.set_xticks(x)
         ax.set_xticklabels([species_names[sid] for sid in species_ids], rotation=0)
 
-    # Add legend
-    fig.legend(legend_handles, ['Concentration', 'Average', 'Exceedance', 'Maximum and Minimum DISP values'],
-               loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=4)
-    plt.tight_layout(pad=1)
-    return fig
+        # Add legend
+        fig.legend(legend_handles, ['Concentration', 'Average', 'Exceedance', 'Maximum and Minimum DISP values'],
+                loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=4)
+        plt.tight_layout(pad=1)
+        return fig
 
-app = App(app_ui, server)
+
 
 
