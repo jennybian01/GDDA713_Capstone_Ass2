@@ -4,38 +4,60 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import linregress
+import plotly.express as px
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+from matplotlib import dates as mdates
+from cycler import cycler
+import seaborn as sns
+
 
 
 def clean_excel_data_p2(e_df):
-   """
-   Reads an Excel file into a DataFrame, drops rows with any missing values,
-   and prints the sum of missing values before and after dropping.
+    """
+    Cleans an Excel DataFrame by dropping rows with missing values and formatting a date column.
+    
+    Parameters:
+    e_df (pd.DataFrame): The input DataFrame to clean.
 
+    Returns:
+    pd.DataFrame: The cleaned DataFrame.
+    """
+    # Define DropNA class
+    class DropNA(BaseEstimator, TransformerMixin):
+        def fit(self, X, y=None):
+            return self
+        
+        def transform(self, X):
+            return X.dropna()
 
-   Parameters:
-   file_path (str): The path to the Excel file.
-   sheet_name (str): The name of the sheet to read from the Excel file.
-   """
+    # Define FormatDate class
+    class FormatDate(BaseEstimator, TransformerMixin):
+        def __init__(self, date_column):
+            self.date_column = date_column
+        
+        def fit(self, X, y=None):
+            return self
+        
+        def transform(self, X):
+            X[self.date_column] = pd.to_datetime(
+                X[self.date_column], errors='coerce'
+            ).dt.strftime('%Y-%m-%d')
+            return X.dropna(subset=[self.date_column])
+    
+    # Create pipeline
+    def create_pipeline(date_column):
+        return Pipeline(steps=[
+            ('drop_na', DropNA()),
+            ('format_date', FormatDate(date_column=date_column))
+        ])
+    
+    # Initialize and run pipeline
+    pipeline = create_pipeline(date_column='Date')
+    df_cleaned = pipeline.fit_transform(e_df)
 
-
-   # Calculate the sum of missing values for each column
-   missing_values = e_df.isnull().sum()
-   print("Missing values before dropping:")
-   print(missing_values)
-
-
-   # Drop rows with any missing values
-   df_cleaned = e_df.dropna()
-
-
-   # Calculate the sum of missing values again to confirm they are gone
-   missing_values_after = e_df.isnull().sum()
-   print("\nMissing values after dropping:")
-   print(missing_values_after)
-
-
-   # Return the cleaned DataFrame
-   return df_cleaned
+    # Return the cleaned DataFrame
+    return df_cleaned
 
 
 
@@ -188,46 +210,72 @@ def get_pm10_data(db_filename1):
    return df_pm10
 
 
-def plot_pm10_trend(df_pm10, output_file):
-   # 确保 'date' 列是日期格式
-   df_pm10['date'] = pd.to_datetime(df_pm10['date'])
 
 
-   # 提取年份和月份
-   df_pm10['year'] = df_pm10['date'].dt.year
-   df_pm10['month'] = df_pm10['date'].dt.month
 
 
-   # 分组并计算每月平均 PM10 值
-   monthly_avg = df_pm10.groupby(['year', 'month'])['total_pm10'].mean().reset_index()
-   monthly_avg['month_year'] = (
-   monthly_avg['year'].astype(str) + '-' + monthly_avg['month'].astype(str).str.zfill(2)
-)
 
 
-   # 执行线性回归计算趋势线
-   X = np.arange(len(monthly_avg))
-   Y = monthly_avg['total_pm10']
-   slope, intercept, r_value, p_value, std_err = linregress(X, Y)
+def plot_pm10_trend(df_pm10):
+    # 确保 'date' 列为日期格式
+    df_pm10['date'] = pd.to_datetime(df_pm10['date'])
+    
+    # 提取年份和月份并计算月均值
+    df_pm10['year'] = df_pm10['date'].dt.year
+    df_pm10['month'] = df_pm10['date'].dt.month
+    monthly_avg = (
+        df_pm10.groupby(['year', 'month'])['total_pm10']
+        .mean()
+        .reset_index()
+        .sort_values(by=['year', 'month'])
+    )
+    monthly_avg['month_year'] = pd.to_datetime(
+        monthly_avg['year'].astype(str) + '-' + monthly_avg['month'].astype(str)
+    )
 
+    # 计算线性回归趋势线
+    X = np.arange(len(monthly_avg))
+    Y = monthly_avg['total_pm10']
+    slope, intercept, r_value, p_value, std_err = linregress(X, Y)
 
-   # 绘制图表
-   plt.figure(figsize=(12, 6))
-   plt.plot(monthly_avg['month_year'], monthly_avg['total_pm10'], marker='o', linestyle='-', color='#66b3ff', markerfacecolor='none', markeredgewidth=2)
-   plt.plot(monthly_avg['month_year'], slope * X + intercept, color='red', linestyle='-', label='Trend Line')
+    # 绘制图表
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(
+        monthly_avg['month_year'], Y,
+        marker='o', linestyle='-', color='#66b3ff', label='PM10 Monthly Average'
+    )
+    ax.plot(
+        monthly_avg['month_year'], slope * X + intercept,
+        color='red', linestyle='-', label='Trend Line'
+    )
+    
+    # 设置标题和标签
+    ax.set_title('Monthly PM10 Contributions Over Time')
+    ax.set_xlabel('Year-Month')
+    ax.set_ylabel('PM10 Average Contributions')
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))  # 使用 mdates 格式化
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=12))  # 每隔12个月显示标签
+    plt.xticks(rotation=45)
+    ax.legend()
 
+    # 添加显著性水平注释
+    significance_text = f"{slope:.2f} [{slope - std_err:.2f}, {slope + std_err:.2f}] units/year"
+    if p_value < 0.01:
+        significance_text += " *** (99% confidence)"
+    elif p_value < 0.05:
+        significance_text += " ** (95% confidence)"
+    elif p_value < 0.1:
+        significance_text += " * (90% confidence)"
+    ax.text(
+        0.5, 0.95, significance_text, 
+        transform=ax.transAxes, 
+        fontsize=12, color='green', 
+        verticalalignment='top', 
+        horizontalalignment='center'
+    )
 
-   plt.title('Monthly PM10 Contributions Over Time')
-   plt.xlabel('Year-Month')
-   plt.ylabel('PM10 Average Contributions')
-   plt.xticks(ticks=range(0, len(monthly_avg), 12), labels=[str(int(year)) for year in monthly_avg['year'][::12]], rotation=45)
-   plt.legend()
-   plt.tight_layout()
-
-
-   # 保存图像
-   plt.savefig(output_file)
-   plt.close()
+    plt.tight_layout()
+    return fig
 
 
 
@@ -245,7 +293,6 @@ def get_all_factors_data(db_filename1):
    FROM Contributions C
    JOIN Factors F ON C.factor_id = F.factor_id
    JOIN Dates D ON C.date_id = D.date_id
-   WHERE F.factor_name != 'PM10'
    ORDER BY D.date ASC;
    """
    cursor.execute(query)
@@ -266,58 +313,82 @@ def get_all_factors_data(db_filename1):
 
 
 
-import pandas as pd
-import matplotlib.pyplot as plt
-import tempfile
-import os
 
-def plot_all_factors_trend(df_all_factors, output_file):
+def plot_all_factors_trend(df_all_factors):
     """
-    Plots the yearly trend of contribution values for each element in the provided dataframe
-    and saves the plot to a temporary file.
+    plot yearly trend, shows all elements trend line, only top 5 value shows their names.
 
-    Parameters:
-    - dataframe (pd.DataFrame): A pandas DataFrame containing the data with columns 'date', 'elements', 'contribution_value', and 'year'.
+    df_all_factors (DataFrame): includes 'elements', 'date', 和 'contribution_value' columns。
 
-    Returns:
-    - temp_file_path (str): The path to the temporary file where the plot is saved.
+    return：
+    fig (Figure): Matplotlib 。
     """
-    # 将日期字符串转换为datetime对象
+    # create a plot and assign each colour represents an element, and do not repeat
+    fig, ax = plt.subplots(figsize=(24, 15))
+    ax.set_prop_cycle(cycler('color', plt.cm.tab20.colors))  # 确保颜色不重复
+
+    # proecess data
     df_all_factors['date'] = pd.to_datetime(df_all_factors['date'])
+    df_all_factors['Year'] = df_all_factors['date'].dt.year
+    df_all_factors['yearly_avg'] = df_all_factors.groupby(['Year', 'elements'])['contribution_value'].transform('mean')
 
-    # 提取年份
-    df_all_factors['year'] = df_all_factors['date'].dt.year
+    # extract top 5 value elements
+    top_elements = (
+        df_all_factors.groupby('elements')['yearly_avg'].max()
+        .nlargest(5).index
+    )
 
-    # 计算每个因素每年的平均贡献值
-    yearly_avg = df_all_factors.groupby(['year', 'elements'])['contribution_value'].mean().reset_index()
+    # print trendline
+    for element in df_all_factors['elements'].unique():
+        element_data = df_all_factors[df_all_factors['elements'] == element]
+        ax.plot(
+            element_data['Year'], 
+            element_data['yearly_avg'], 
+            marker='o', linestyle='-', label=element
+        )
 
-    # 创建一个临时文件
-    temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-    temp_file_path = temp_file.name
+        # show top five elements names
+        if element in top_elements:
+            first_year = element_data['Year'].iloc[0]
+            first_avg = element_data['yearly_avg'].iloc[0]
+            ax.text(
+                first_year - 0.5, first_avg, element,  # 偏移让名称在曲线左方
+                fontsize=10, ha='right', va='center', fontweight='bold', alpha=0.8
+            )
 
-    # 绘制趋势图
-    plt.figure(figsize=(12, 8))
+    # plot setting
+    ax.set_title("Yearly Average Contribution Values for All Elements", fontsize=14)
+    ax.set_xlabel("Year", fontsize=12)
+    ax.set_ylabel("Yearly Average Contribution Values", fontsize=12)
+    
+    # layout
+    fig.subplots_adjust(bottom=0.2)  # can be adjusted.
 
-    # 为每个因素绘制趋势线
-    for element in yearly_avg['elements'].unique():
-        element_data = yearly_avg[yearly_avg['elements'] == element]
-        plt.plot(element_data['year'], element_data['contribution_value'], marker='o', linestyle='-', label=element)
+    # legend setting
+    ax.legend(
+        title='Element', loc='upper center', 
+        bbox_to_anchor=(0.5, -0.2), frameon=False, fontsize=8, ncol=15
+    )
+    
+    ax.grid(True)
 
-    # 设置图表标题和轴标签
-    plt.title('Yearly Average Contribution of Elements Over Time')
-    plt.xlabel('Year')
-    plt.ylabel('Average Contribution Value')
 
-    # 添加图例
-    plt.legend(title='Element', loc='upper right', ncol=3, labelspacing=0.1, frameon=False)
+    return fig
 
-    # 调整布局并保存图表到临时文件
-    plt.tight_layout()
-    plt.savefig(temp_file_path, format='png')
-    plt.close()
 
-    # 关闭临时文件
-    temp_file.close()
+def elements_options(df_all_factors):
+    """
+    提取独特的 elements 作为下拉菜单的选项。
+    """
+    print("DataFrame columns:", df_all_factors.columns)  # 打印列名
+    print("DataFrame preview:\n", df_all_factors.head())  # 打印前几行数据
 
-    return temp_file_path
+    if 'elements' not in df_all_factors.columns:
+        print("Error: 'elements' column not found in DataFrame.")
+        return []  # 返回空列表，避免程序中断
+
+    return df_all_factors['elements'].dropna().unique().tolist()
+
+
+
 
