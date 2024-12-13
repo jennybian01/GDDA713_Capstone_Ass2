@@ -5,6 +5,8 @@ import os
 import numpy as np
 import sqlite3
 import tempfile
+import io
+import plotly.express as px
 from p1.process_data_and_plot import (
     process_data_and_plot,
     fetch_contributions,
@@ -20,11 +22,10 @@ from p1.process_data_and_plot import (
 from datetime import date
 import matplotlib.pyplot as plt
 import random
-import plotly.express as px
-import seaborn as sns
-from shinywidgets import render_plotly
-from shinywidgets import output_widget, render_widget
-import calplot
+import logging
+from shiny.types import SilentException
+from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse
 from p2.process_data_and_plot_p2 import (
     clean_excel_data_p2,
     drop_database_p2,
@@ -38,10 +39,21 @@ from p2.process_data_and_plot_p2 import (
     plot_all_factors_trend,
     elements_options,
 )
+from p3.process_data_and_plot_p3 import(
+    data_cleaning_and_transformation,
+    create_database_p3,
+    insert_sources_to_database,
+    insert_species_to_database,
+    insert_measurements_to_database,
+    fetch_and_format_data,
+    plot_pie_chart,
+    plot_source_contribution,
+)
 
-
+#File paths
 db_filename = "contributions_data.sqlite"
 db_filename1 = "elements_data.sqlite"
+db_filename2 = "pollution_data.sqlite"
 
 # Define CSS styles
 css = """
@@ -156,15 +168,15 @@ app_ui = ui.page_fluid(
                     "Calendar Plot",
                     "Shows the selected element trend from calendar plot",
                     ui.input_selectize(id="element_dropdown", label="Select an Element:", choices=[]),
-                    ui.input_action_button("action_botton3", label="Visualization"),
+            
                     ui.output_text_verbatim("selected_option"),
                     ui.output_plot("plot_calendar_new"),
                 ),
             ),
         ),
         ui.nav_panel(
-            "Source Contribution",
-            "Pie Chart & Source Contribution Plot",
+            "Pollution Contribution",
+            "Pollution Contribution Plot and source pie chart",
             ui.navset_tab(
                 ui.nav_panel(
                     "Upload",
@@ -174,8 +186,15 @@ app_ui = ui.page_fluid(
                     ),
                     ui.output_table("preview_table3"),  # Preview for file3
                 ),
-                ui.nav_panel("Data processing", "Cleaning and processing dataset"),
-                ui.nav_panel("Pie Chart", "Source Contribution Pie Chart"),
+                ui.nav_panel("Data processing", "Cleaning and processing dataset",
+                             ui.h5("Pollution Contribution"),
+                             ui.output_data_frame("processed_p3_table"),
+                             ui.download_button("downloadData4", "Download Data")
+                             ),
+                ui.nav_panel("Pie Chart", "Source Contribution Pie Chart",
+                        ui.input_action_button("action_button3","Visulization"),
+                        ui.output_plot("plot_pie_chart"),
+                    ),
                 ui.nav_panel("Source Contribution Plot", "Source Contribution Plot"),
             ),
         ),
@@ -186,7 +205,7 @@ app_ui = ui.page_fluid(
 
 
 dropdown_options = reactive.Value(elements_options)
-
+get_p3_data_reactive= reactive.Value()
 
 def server(input, output, session):
     print("Registered outputs:", dir(output))
@@ -199,12 +218,7 @@ def server(input, output, session):
     get_all_factors_data_reactive = reactive.Value()
     uploaded_data = reactive.Value(None)
 
-    df_data = None  # 在全局作用域中初始化
 
-    def initialize_data():
-        global df_data
-        data = get_all_factors_data_reactive() or {"date": [], "elements": [], "contribution_value": []}
-        df_data = pd.DataFrame(data)
 
     @output
     @render.table
@@ -282,6 +296,46 @@ def server(input, output, session):
             return None
 
     ########################## P2 ######################################
+
+    # Initialize an empty dataframe, only set after file upload
+    df_data = None
+
+    # Initialization function
+    def initialize_data():
+        global df_data
+        # This will only fetch data once a file is uploaded
+        data = get_all_factors_data_reactive() or {"date": [], "elements": [], "contribution_value": []}
+        df_data = pd.DataFrame(data)
+
+    # Create a reactive value to store the state of the file upload
+    file_uploaded = reactive.Value(False)  # This will track if a file is uploaded
+
+    # Create a function to set the file upload state
+    def handle_file_upload(file):
+        if file:  # If the file exists, mark as uploaded
+            file_uploaded.set(True)
+
+        # Reactive Effect that initializes data only after file is uploaded
+    @reactive.Effect
+    def init_data():
+        # Only initialize data if the file is uploaded
+        if file_uploaded.get():
+            print("Initializing data...")
+
+            if not os.path.exists(db_filename1):
+                print(f"Database file {db_filename1} does not exist. Creating...")
+                create_database_p2(db_filename1)
+            else:
+                print(f"Database file {db_filename1} already exists.")
+            
+            # Set the data into reactive values after database creation
+            get_pm10_data_reactive.set(get_pm10_data(db_filename1))
+            get_all_factors_data_reactive.set(get_all_factors_data(db_filename1))
+            print("Data initialization complete.")
+        else:
+            print("File not uploaded yet. Waiting for upload...")
+
+
     @output
     @render.table
     def preview_table2():
@@ -290,19 +344,18 @@ def server(input, output, session):
         """
         if input.file2() is None:
             return pd.DataFrame({"Message": ["No file uploaded yet."]})
+        
         file_info = input.file2()
-        uploaded_file_data = pd.read_excel(
-            file_info[0]["datapath"], sheet_name="PMFData"
-        )
+        uploaded_file_data = pd.read_excel(file_info[0]["datapath"], sheet_name="PMFData")
         return uploaded_file_data.head(10)
 
+    # Reactively trigger the data processing after the file is uploaded
     @reactive.Effect
     @reactive.event(input.file2)
     def process_and_store_data_p2():
         """
         Trigger data processing when a file is uploaded, using the 'PMFData' worksheet.
         """
-
         file_info = input.file2()
         print("File info:", file_info)
         if file_info is not None:
@@ -312,33 +365,30 @@ def server(input, output, session):
                 e_df = pd.read_excel(file_path, sheet_name="PMFData")
             else:
                 print("File path is missing in file_info.")
+                return
 
-        # Delete existing database file
-        if os.path.exists(db_filename1):
-            os.remove(db_filename1)
+            # Delete existing database file if exists, to avoid conflict
+            if os.path.exists(db_filename1):
+                os.remove(db_filename1)
 
-        # Re-create the database
-        create_database_p2(db_filename1)
-
-        # Data cleaning and processing logic from p2.proceess_data_and_plot_p2
-        e_df = clean_excel_data_p2(e_df)
-
-        # Store cleaned data into SQLite database
-        insert_dates_to_table_p2(db_filename1, e_df)
-        insert_factors_to_table_p2(db_filename1, e_df)
-        insert_contributions_to_table_p2(db_filename1, e_df)
-
-    @reactive.Effect
-    def init_data():
-        print("Initializing data...")
-        if not os.path.exists(db_filename1):
-            print(f"Database file {db_filename1} does not exist. Creating...")
+            # Re-create the database
             create_database_p2(db_filename1)
-        else:
-            print(f"Database file {db_filename1} already exists.")
-        get_pm10_data_reactive.set(get_pm10_data(db_filename1))
-        get_all_factors_data_reactive.set(get_all_factors_data(db_filename1))
-        print("Data initialization complete.")
+
+            # Data cleaning and processing logic from process_data_and_plot_p2
+            e_df = clean_excel_data_p2(e_df)
+
+            # Store cleaned data into SQLite database
+            insert_dates_to_table_p2(db_filename1, e_df)
+            insert_factors_to_table_p2(db_filename1, e_df)
+            insert_contributions_to_table_p2(db_filename1, e_df)
+
+            # Re-fetch the cleaned data into reactive values
+            get_pm10_data_reactive.set(get_pm10_data(db_filename1))
+            get_all_factors_data_reactive.set(get_all_factors_data(db_filename1))
+
+            print("Data processing completed.")
+
+
 
     @output
     @render.data_frame
@@ -352,7 +402,7 @@ def server(input, output, session):
     @render.download(
         filename=lambda: f"data-{date.today().isoformat()}-{random.randint(100, 999)}.csv"
     )
-    def downloadData2():  # 注意这里要与 UI 的 ID 对应
+    def downloadData2():  
         df_download2 = get_pm10_data_reactive()
         if not df_download2.empty:
             print("Preparing CSV data for download...")
@@ -420,7 +470,7 @@ def server(input, output, session):
         print("Reactive function triggered.")
         print("Current selected element:", input.selected_element())
     
-    # Reactivity 处理
+    # Reactivity 
     @reactive.Effect
     def update_dropdown():
         """
@@ -434,31 +484,6 @@ def server(input, output, session):
         options = elements_options(df_all_factors)
         ui.update_selectize("element_dropdown", choices=options)
 
-
-
-    @reactive.Effect
-    async def handle_submit():
-        if input.action_botton3() > 0:
-            print("Submit button clicked.")
-            selected_element = input.element_dropdown()
-            if not selected_element:
-                print("No element selected. Please select an element to generate the plot.")
-                return
-
-            df_all_factors = get_all_factors_data_reactive()
-            if df_all_factors is None or df_all_factors.empty:
-                print("df_all_factors is None or empty. Cannot generate plot.")
-                return
-
-            print("Reactive data (df_all_factors):")
-            print(df_all_factors.head())
-
-            fig = generate_calendar_plot(df_all_factors, selected_element)
-            if fig:
-                fig.savefig(f"{selected_element}_heatmap.png")
-                print("Plot saved successfully.")
-            else:
-                print("Plot generation returned None.")
 
 
 
@@ -557,6 +582,10 @@ def server(input, output, session):
 
 
     ######################### P3#############################
+    # 配置 logger
+    logger = logging.getLogger(__name__)
+
+
     @output
     @render.table
     def preview_table3():
@@ -568,6 +597,80 @@ def server(input, output, session):
         file_info = input.file3()
         uploaded_file_data = pd.read_excel(file_info[0]["datapath"], sheet_name=0)
         return uploaded_file_data.head(10)
+    
+
+
+    @reactive.Effect
+    @reactive.event(input.file3)
+    def process_and_store_data():
+        logger.info("Triggered process_and_store_data with input.file3.")
+        try:
+            file_info = input.file3()
+            if file_info:
+                file_path = file_info[0].get("datapath")
+                logger.debug(f"File path: {file_path}")
+                if not os.path.exists(file_path):
+                    logger.error(f"File not found at path: {file_path}")
+                    return
+                df = pd.read_excel(file_path)
+                logger.info("File successfully read into DataFrame.")
+
+                create_database_p3(db_filename2)
+                logger.info("Database created.")
+                processed_dfs = data_cleaning_and_transformation(df)
+                logger.info("Data cleaning completed.")
+                # Process and store data
+                insert_sources_to_database(db_filename2, processed_dfs)
+                insert_species_to_database(db_filename2, processed_dfs)
+                insert_measurements_to_database(db_filename2, processed_dfs)
+                logger.info("Data successfully stored in database.")
+
+                get_p3_data_reactive.set(fetch_and_format_data(db_filename2))
+                logger.info("Reactive data has been set.")
+        except Exception as e:
+            logger.error(f"Error in process_and_store_data: {e}", exc_info=True)
+
+
+
+    @output
+    @render.data_frame
+    def processed_p3_table():
+        """
+        Render the processed data, if available.
+        """
+        data = get_p3_data_reactive.get()
+        if data is None or data.empty:
+            print("No data available to display.")
+            return pd.DataFrame({"Message": ["No data available"]})
+        return data
+
+
+
+
+    @render.download(
+        filename=lambda: f"data-{date.today().isoformat()}-{random.randint(100, 999)}.csv"
+    )
+    def downloadData4():
+        df_download4 = get_p3_data_reactive.get()
+        if not df_download4.empty:
+            csv_data = df_download4.to_csv(index=False)
+            yield csv_data
+
+    @output
+    @render.plot
+    @reactive.event(input.action_button3)
+    def source_pie_chart():
+        db_filename2 = "pollution_data.sqlite"  # 替换为你的数据库路径
+        fig = plot_pie_chart(db_filename2)
+        if fig:
+            return fig
+        else:
+            # 返回空图表表示无数据
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
+            ax.set_title("No data available")
+            return fig
+
 
 
 app = App(app_ui, server)
