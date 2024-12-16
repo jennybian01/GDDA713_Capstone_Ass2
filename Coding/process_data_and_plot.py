@@ -5,6 +5,8 @@ from matplotlib import pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 import statsmodels.api as sm
+from matplotlib.ticker import MultipleLocator
+from statsmodels.tsa.seasonal import seasonal_decompose
 
 def process_data_and_plot(dataframe):
     """
@@ -162,25 +164,61 @@ def fetch_contributions(db_filename):
 
 
 def plot_monthly_pm10_trend(df):
-    if df.empty:
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.set_title('No Data Available')
-        ax.set_xlabel('Year-Month')
-        ax.set_ylabel('PM10 Average Contributions')
-        return fig  
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import numpy as np
+    import statsmodels.api as sm
 
+    # Ensure the 'date' column is in datetime format
     df['date'] = pd.to_datetime(df['date'])
+
+    # Extract the year and month
     df['year'] = df['date'].dt.year
     df['month'] = df['date'].dt.month
+
+    # Group by year and month and calculate the average PM10 contribution for each month
     monthly_avg = df.groupby(['year', 'month'])['total_pm10'].mean().reset_index()
+
+    # Create a 'month_year' column for better x-axis labels
     monthly_avg['month_year'] = monthly_avg['year'].astype(str) + '-' + monthly_avg['month'].astype(str).str.zfill(2)
-    
-    fig, ax = plt.subplots(figsize=(12, 6))  
-    ax.plot(monthly_avg['month_year'], monthly_avg['total_pm10'], marker='o', linestyle='-', color='#66b3ff', markerfacecolor='none', markeredgewidth=2)
+
+    # Create a time variable for statsmodels regression
+    time = np.arange(len(monthly_avg))
+
+    # Add a constant to the model (intercept)
+    X = sm.add_constant(time)
+    y = monthly_avg['total_pm10']
+
+    # Fit the regression model
+    model = sm.OLS(y, X).fit()
+
+    # Create a figure object
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Plot the monthly trend chart
+    ax.plot(monthly_avg['month_year'], monthly_avg['total_pm10'], marker='o', linestyle='-', color='#66b3ff', markerfacecolor='none', markeredgewidth=2, label="PM10 Avg")
+
+    # Plot the trend line
+    ax.plot(monthly_avg['month_year'], model.predict(X), linestyle='-', color='red', label="Trend Line")
+
+    # Get the confidence intervals for the predicted values
+    ci = model.get_prediction(X).conf_int()
+
+    # Plot the lower and upper confidence intervals
+    ax.fill_between(monthly_avg['month_year'], ci[:, 0], ci[:, 1], color='red', alpha=0.3, label="Confidence Interval")
+
+    # Customize the chart
     ax.set_title('Monthly PM10 Contributions Over Time')
-    ax.set_xlabel('Year-Month')
+    ax.set_xlabel('Month-Year')
     ax.set_ylabel('PM10 Average Contributions')
-    ax.tick_params(axis='x', rotation=45)  
+
+    # Fix the x-axis to display labels every 2 years
+    ax.set_xticks(range(0, len(monthly_avg['month_year']), 24))
+    ax.set_xticklabels(monthly_avg['month_year'][::24], rotation=45)
+
+    # Remove vertical grid lines and keep horizontal ones
     ax.grid(axis='y')
-    ax.legend(['PM10 Average'])
-    return fig  
+    ax.legend()
+
+    # Return the figure object
+    return fig

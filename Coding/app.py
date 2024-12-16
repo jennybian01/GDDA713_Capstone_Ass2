@@ -6,7 +6,6 @@ import numpy as np
 import sqlite3
 import tempfile
 import io
-import plotly.express as px
 from p1.process_data_and_plot import (
     process_data_and_plot,
     fetch_contributions,
@@ -22,10 +21,15 @@ from p1.process_data_and_plot import (
 from datetime import date
 import matplotlib.pyplot as plt
 import random
+import plotly.express as px
+import seaborn as sns
+from shinywidgets import render_plotly
+from shinywidgets import output_widget, render_widget
 import logging
 from shiny.types import SilentException
 from starlette.responses import StreamingResponse
 from starlette.responses import JSONResponse
+from matplotlib.ticker import FuncFormatter
 from p2.process_data_and_plot_p2 import (
     clean_excel_data_p2,
     drop_database_p2,
@@ -40,14 +44,16 @@ from p2.process_data_and_plot_p2 import (
     elements_options,
 )
 from p3.process_data_and_plot_p3 import(
-    data_cleaning_and_transformation,
+    clean_data,
+    process_dfs_p3,
+    pm_10_percentage,
+    source_contribution_transformation,
     create_database_p3,
     insert_sources_to_database,
     insert_species_to_database,
     insert_measurements_to_database,
+    insert_pm10_percentage_to_db,
     fetch_and_format_data,
-    plot_pie_chart,
-    plot_source_contribution,
 )
 
 #File paths
@@ -55,30 +61,92 @@ db_filename = "contributions_data.sqlite"
 db_filename1 = "elements_data.sqlite"
 db_filename2 = "pollution_data.sqlite"
 
-# Define CSS styles
+ # Define CSS styles
 css = """
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #fcfcfc; /* 背景颜色 */
+    margin: 0;
+    padding: 0;
+    color: #1E3D51;
+}
+
 #tab {
-    width: 100%; 
+    width: 90%; 
+    margin: 0 auto; /* 居中对齐 */
+    background-color: #04314b; /* 背景颜色 */
+    padding: 20px; /* 内边距 */
+    border-radius: 20px; /* 圆角 */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* 阴影效果 */
 }
+
 #tab .nav-item {
-    background-color: #f9f9f9;
-    padding: 20px;
-    border-radius: 15px;
-    margin-bottom: 20px;
-    text-align: center; 
+    background-color: #04314b; /* 背景颜色 */
+    padding: 30px;
+    border-radius: 30px;
+    margin-bottom: 50px;
+    text-align: center;
+    font-size: 16px; 
 }
+
 #tab .nav-link {
-    color: #5081c8;
-    font-weight: bold; /* 加粗文字 */
+    color: #fcfcfd;
+    font-weight: bold; 
 }
+
 #tab .nav-link.active {
-    background-color: #e7e7e7;
+    background-color: #91ad56;
+    color: #fcfcfd; /* 激活状态文字颜色 */
 }
+
 #tab .tab-content {
-    background-color: #f9f9f9;
-    padding: 10px;
-    border-radius: 5px;
+    background-color: #7e919e;
+    padding: 5px;
+    border-radius: 20px;
 }
+
+#tab {
+    width: 95%; /* 整体宽度 */
+    margin: 0 auto; /* 居中对齐 */
+}
+
+#tab .nav-pills {
+    display: flex;
+    flex-wrap: nowrap; /* 如果 pill 太多，可以换行 */
+    justify-content: center; /* 居中对齐 pill */
+    gap: 10px; /* pill 间距 */
+}
+
+#tab .nav-pills .nav-link {
+    background-color: #7e919e; /* unactive pill backgroud colour */
+    color: #7e919e; /* unactive word colour */
+    border-radius: 15px;
+    padding: 15px 20px; /* pill size */
+    font-size: 30px; /* font size */
+}
+
+#tab .nav-pills .nav-link.active {
+    background-color: #5081c8; /* 激活状态背景色 */
+    color: white; /* 激活状态文字颜色 */
+}
+
+#tab .nav-item {
+    flex: 0 0 auto; /* 禁止 pill 拉伸 */
+    margin: 5px; /* 每个 pill 的外部间距 */
+}
+
+.container {
+    background-color: transparent;
+}
+
+#NZSE_logo {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
+}
+
+
 """
 
 
@@ -88,87 +156,91 @@ css = """
 
 # Define the UI
 app_ui = ui.page_fluid(
+    ui.div(
+        ui.output_image("image",width="3000px", height="auto"),
+        style="position: absolute; top: 10px; left: 20px; width: 3000px; height: auto;"
+    ),
     ui.card_header(
-        "Auckland Air Quality Monitoring Application",
-        style="background-color: #5081c8; color: white; padding: 60px; text-align: center; font-size: 40px;",
+        "",
+        style="position: relative; padding: 30px; padding-left: 400px;font-size: 45px; font-family: 'YogaSans', sans-serif; font-weight: bold;"
+    ),
+    ui.card_header(
+        ui.div(
+            ui.h1("PM Insights Pro", style="font-size: 45px; font-weight: color: #color: #FFFFFF;"),
+            ui.h2("Automation (PM10) Speciation Analysis Application", style="font-size: 18px; color: #91ad57; margin-top: 10px;"),  # 添加了 margin-top 以分隔两个标题
+            style="background-color: #04314b; padding: 30px; color: #FFFFFF;text-align: center;"
+        ),
+        style="padding: 10px;"  # 为 header 添加内边距
     ),
     ui.navset_pill_list(
         ui.nav_panel(
-            "Contributions Trend Analysis",
+            "PM10 Trend Analysis",
             ui.navset_tab(
                 ui.nav_panel(
                     "Upload",
-                    "Please upload excel file.",
                     ui.input_file(
                         "file1",
-                        "Choose an Excel file to upload, eg. RUN5PM10_base.xlsx",
+                        "Please upload an Excel file, for example, 'RUN5PM10_base.xlsx'.",
                         multiple=False,
                     ),
-                    ui.output_table(
-                        "preview_table1"
-                    ),  # Ensure this matches the server function
+                    ui.output_table("preview_table1"),
                 ),
                 ui.nav_panel(
                     "Data processing",
-                    "Cleaning and processing dataset.",
-                    ui.h5("Total PM10 group by date"),
-                    ui.output_data_frame(
-                        "processed_contributions"
-                    ),  # Output processed contributions data
-                    ui.download_button("downloadData1", "Download Data"),
+                    "Click the button to download the cleaned data.",
+                    ui.h6("Total PM10 group by date"),
+                    ui.output_data_frame("processed_contributions"),
+                    ui.download_button("downloadData", "Download"),
                 ),
                 ui.nav_panel(
                     "Trend analysis",
-                    "Cleaned data trend analysis",
                     ui.output_plot("monthly_pm10_trend_plot"),
                 ),
             ),
         ),
         ui.nav_panel(
             "Element Trend Analysis",
-            "Trend analysis of each element",
+            "The dataset provides a comprehensive trend analysis of PM10 and its constituent elements, offering insights into air quality patterns over time.",
             ui.navset_tab(
                 ui.nav_panel(
                     "Upload",
-                    "Please upload excel file.",
                     ui.input_file(
                         "file2",
-                        "Choose an Excel file to upload, eg.QueenStreetPM10PMFDataUncert_May2023.xlsx ",
+                        "Please upload an Excel file that contains PM10 and elements data, for example, 'QueenStreetPM10PMFDataUncert_May2023.xlsx'.",
                         multiple=False,
                     ),
-                    ui.output_table("preview_table2"),  # Preview for file2
+                    ui.output_table("preview_table2"),
                 ),
                 ui.nav_panel(
                     "Data processing(PM10)",
-                    "Cleaning and processing dataset.",
-                    ui.h5("Total PM10 by date"),
+                    "Click the button to download the cleaned data.",
+                    ui.h6("Total PM10 by date"),
                     ui.output_data_frame("processed_pm10_table"),
                     ui.download_button("downloadData2", "Download Data"),
                 ),
                 ui.nav_panel(
                     "Data processing(All elements)",
-                    "Cleaning and processing dataset.",
-                    ui.h5("Elements group by date"),
+                    "Click the button to download the cleaned data.",
+                    ui.h6("Elements group by date"),
                     ui.output_data_frame("processed_all_factors_table"),
                     ui.download_button("downloadData3", "Download Data"),
                 ),
                 ui.nav_panel(
                     "Trend Analysis(PM10)",
-                    "Cleaned data trend analysis",
+                    "Visualize the PM10 values spanning multiple years by clicking the button.",
                     ui.input_action_button("action_button1", "Visualization"),
                     ui.output_plot("pm10_trend_plot"),
                 ),
                 ui.nav_panel(
                     "Trend Analysis(All elements)",
-                    "Cleaned data trend analysis",
+                    "Click the button to visualize the values of all elements over the years.",
                     ui.input_action_button("action_button2", "Visualization"),
                     ui.output_plot("all_factors_trend_plot"),
                 ),
                 ui.nav_panel(
                     "Calendar Plot",
-                    "Shows the selected element trend from calendar plot",
+                    "Choose an element to view its trend on a calendar plot.",
                     ui.input_selectize(id="element_dropdown", label="Select an Element:", choices=[]),
-            
                     ui.output_text_verbatim("selected_option"),
                     ui.output_plot("plot_calendar_new"),
                 ),
@@ -176,30 +248,56 @@ app_ui = ui.page_fluid(
         ),
         ui.nav_panel(
             "Pollution Contribution",
-            "Pollution Contribution Plot and source pie chart",
+            "The dataset offers detailed insights into sources and elemental contributions.",
             ui.navset_tab(
                 ui.nav_panel(
                     "Upload",
-                    "Please upload excel file.",
                     ui.input_file(
-                        "file3", "Choose an Excel file to upload", multiple=False
+                        "file3", "Please upload an Excel file that contains sources and elemental contributions data, for example,RUN5PM10_BaseErrorEstimationSummary", multiple=False
                     ),
-                    ui.output_table("preview_table3"),  # Preview for file3
+                    ui.output_table("preview_table3"),
                 ),
-                ui.nav_panel("Data processing", "Cleaning and processing dataset",
-                             ui.h5("Pollution Contribution"),
+                ui.nav_panel("Data processing", "Click the button to download the cleaned data.",
+                             ui.h6("Pollution Contribution"),
                              ui.output_data_frame("processed_p3_table"),
-                             ui.download_button("downloadData4", "Download Data")
-                             ),
-                ui.nav_panel("Pie Chart", "Source Contribution Pie Chart",
-                        ui.input_action_button("action_button3","Visulization"),
-                        ui.output_plot("plot_pie_chart"),
-                    ),
-                ui.nav_panel("Source Contribution Plot", "Source Contribution Plot"),
+                             ui.download_button("downloadData4", "Download Data")),
+                ui.nav_panel("Pie Chart", "Visualize the sources contribution pie chart by clicking the button.",
+                             ui.input_action_button("action_button3", "Visualization"),
+                             ui.output_plot("plot_pie_chart")),
+                ui.nav_panel("Elements Contribution Plot", "Visualize the elements contribution plot by clicking the button.",
+                             ui.input_action_button("action_button4", "Visualization"),
+                             ui.output_plot("plot_source_contribution")),
             ),
         ),
+        ui.nav_panel("About", 
+                     ui.h1("About PM Insights Pro", style="color: #04314b;  text-align: center;"), 
+                         ui.accordion(  
+                                    ui.accordion_panel("Problem Statement", "Air pollution significantly impacts public health, yet monitoring and analyzing its effects is often hindered by the complexity and time-consuming nature of processing large environmental datasets. Auckland City Council researchers face challenges in performing particulate matter (PM10) speciation analysis, which requires breaking down samples into chemical components to identify pollution sources. Current manual processes are prone to inefficiencies and errors, highlighting the need for a scalable and automated solution."),  
+                                    ui.accordion_panel("Purpose and Features", "To enhance the efficiency and accuracy of PM10 speciation analysis at monitoring station through an automated workflow. This project leverages Python and Shiny to streamline data processing, mining, and visualization, empowering researchers to make informed decisions for pollution management and public health policy development. And it features 1) Automated Data Processing; 2) Advanced Data Visualization; 3) User-Friendly Interface; 4) Scalability; 5) Report Generation.By addressing these challenges, the solution transforms labor-intensive processes into streamlined workflows, ultimately supporting Auckland City Council in developing effective environmental strategies and robust public health policies."),  
+                                    ui.accordion_panel("How to use?","To use the app, start by uploading your data through the Upload tab. The app is designed specifically for three predefined datasets; please ensure you upload the correct dataset. If an incorrect dataset is uploaded, the app will not respond. For each new upload, please refresh the page before proceeding. The app will automatically clean the data, which will then appear in the Data Processing tab, where you can also download the cleaned data for other purposes. Next, explore the Visualizations tab to view the processed data in graphical formats. Some visualizations require you to click a button to generate the charts, making it easy to analyze and interpret the data."),
+                                    ui.accordion_panel("Dataset Information", "The dataset used for this app includes publicly available data provided by the Auckland City Council, specifically focusing on Auckland Queen Street trends for the years 2006 to 2022. However, this app can handling same structure dataset from multiple stations."),  
+                                    ui.accordion_panel("Team Information", "Our team, consisting of Wanli Chen and Jenny Bian, is proud to be working on an automated air quality data analysis application as part of a collaborative project between NZSE and the Auckland City Council. This project aims to streamline the processing and analysis of air quality data, providing valuable insights for better environmental management. Guided by our esteemed mentors, Dr. Sara Zandi and Dr. Louis Boamponsem, we have developed an innovative app that automates data cleaning, trend analysis, and visualization. Our goal is to create a user-friendly tool that contributes to informed decision-making for improving Auckland’s air quality."),  
+                                    ui.accordion_panel("Contact Information", "For technical support, you are welcome to contact insightspronz@gmail.com."),
+                                    ui.accordion_panel("Privacy Policy and Terms", "1) All information used in the app is provided by Auckland City Council and is publicly available; 2) The app itself does not store any information. 3)The app is designed exclusively for use by Auckland City Council. "),   
+                                    id="acc",  
+                                    open="Section A",  
+                                    ),  
+                     
+                     ),
         id="tab",
+        widths=(3, 8),
     ),
+
+    ui.card_footer(
+    ui.div(
+        ui.output_image("NZSE_logo"),  # 保留 logo
+        style="background-color: #f6f6f6; padding: 10px; text-align: center; height: 80px;"  # 简单样式
+    )
+),
+
+
+
+
     ui.tags.style(css),  # Add CSS styles
 )
 
@@ -209,6 +307,26 @@ get_p3_data_reactive= reactive.Value()
 
 def server(input, output, session):
     print("Registered outputs:", dir(output))
+
+    @render.image
+    def image():
+        from pathlib import Path
+
+        dir = Path(__file__).resolve().parent
+        img = {"src": str(dir / "aucklandcouncil.png"), "width": "100px"}
+        return img
+
+
+  
+  
+    @render.image
+    def NZSE_logo():
+        from pathlib import Path
+
+        dir = Path(__file__).resolve().parent
+        img = {"src": str(dir / "NZSE-logo.png"), "width": "100px"}
+        return img
+
 
     # Reactive variable to store the fetched contributions data
     contributions_data = reactive.Value(pd.DataFrame())
@@ -232,6 +350,8 @@ def server(input, output, session):
         df = pd.read_excel(file_path, sheet_name="Contributions")
         uploaded_data.set(df)  # Store the uploaded data
         return df.head(10)
+    
+
 
     @reactive.Effect
     @reactive.event(input.file1)
@@ -315,7 +435,9 @@ def server(input, output, session):
         if file:  # If the file exists, mark as uploaded
             file_uploaded.set(True)
 
-        # Reactive Effect that initializes data only after file is uploaded
+    
+    
+    # Reactive Effect that initializes data only after file is uploaded
     @reactive.Effect
     def init_data():
         # Only initialize data if the file is uploaded
@@ -602,33 +724,67 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.file3)
-    def process_and_store_data():
-        logger.info("Triggered process_and_store_data with input.file3.")
+    def process_and_store_data_with_file3():
+        logger.info("Triggered process_and_store_data_with_file3 with input.file3.")
+
         try:
+            # Step 1: Validate and read uploaded file
             file_info = input.file3()
-            if file_info:
-                file_path = file_info[0].get("datapath")
-                logger.debug(f"File path: {file_path}")
-                if not os.path.exists(file_path):
-                    logger.error(f"File not found at path: {file_path}")
-                    return
-                df = pd.read_excel(file_path)
-                logger.info("File successfully read into DataFrame.")
+            if not file_info:
+                logger.error("No file3 uploaded.")
+                return
 
-                create_database_p3(db_filename2)
-                logger.info("Database created.")
-                processed_dfs = data_cleaning_and_transformation(df)
-                logger.info("Data cleaning completed.")
-                # Process and store data
-                insert_sources_to_database(db_filename2, processed_dfs)
-                insert_species_to_database(db_filename2, processed_dfs)
-                insert_measurements_to_database(db_filename2, processed_dfs)
-                logger.info("Data successfully stored in database.")
+            file_path = file_info[0].get("datapath")
+            if not file_path or not os.path.exists(file_path):
+                logger.error(f"File not found at path: {file_path}")
+                return
 
-                get_p3_data_reactive.set(fetch_and_format_data(db_filename2))
-                logger.info("Reactive data has been set.")
+            logger.debug(f"File path: {file_path}")
+            df = pd.read_excel(file_path)
+            logger.info("File successfully read into DataFrame.")
+
+            # Step 2: Create database
+            create_database_p3(db_filename2)
+            logger.info("Database created.")
+
+            # Step 3: Clean data
+            new_dfs = clean_data(df)
+            logger.info("Data cleaning completed.")
+
+            # Step 4: Process data
+            selected_dfs = process_dfs_p3(new_dfs)
+            logger.info("Data processing completed.")
+
+            
+            # Step 5: Insert PM10 percentages
+            pm10_percentage_df = pm_10_percentage(selected_dfs)  # Pass transformed_dfs as argument
+            insert_pm10_percentage_to_db(db_filename2, pm10_percentage_df)
+            logger.info("PM10 percentage data inserted into database.")
+
+            # Step 6: Transform source contributions
+            transformed_dfs = source_contribution_transformation(selected_dfs)
+            logger.info("Source contribution transformation completed.")
+
+            # Step 7: Insert data into database
+            insert_sources_to_database(db_filename2, transformed_dfs)
+            logger.info("Sources data inserted into database.")
+
+            insert_species_to_database(db_filename2, transformed_dfs)
+            logger.info("Species data inserted into database.")
+
+            insert_measurements_to_database(db_filename2, transformed_dfs)
+            logger.info("Measurements data inserted into database.")
+
+
+            # Step 8: Fetch and format data for reactive updates
+            formatted_data = fetch_and_format_data(db_filename2)
+            get_p3_data_reactive.set(formatted_data)
+            logger.info("Reactive data has been set.")
+
         except Exception as e:
-            logger.error(f"Error in process_and_store_data: {e}", exc_info=True)
+            logger.error(f"Error in process_and_store_data_with_file3: {e}", exc_info=True)
+
+
 
 
 
@@ -656,21 +812,222 @@ def server(input, output, session):
             csv_data = df_download4.to_csv(index=False)
             yield csv_data
 
+
+
+
+
     @output
     @render.plot
     @reactive.event(input.action_button3)
-    def source_pie_chart():
-        db_filename2 = "pollution_data.sqlite"  # 替换为你的数据库路径
-        fig = plot_pie_chart(db_filename2)
-        if fig:
-            return fig
-        else:
-            # 返回空图表表示无数据
-            import matplotlib.pyplot as plt
-            fig, ax = plt.subplots()
-            ax.set_title("No data available")
+    def plot_pie_chart():
+        """
+        绘制显示污染来源 PM10 百分比的饼图。
+
+        参数:
+        - db_filename2: str, SQLite 数据库路径。
+
+        返回:
+        - fig: matplotlib.figure.Figure, 包含饼图的图像对象。
+        """
+        print("Starting plot_pie_chart...")  # 调试起点
+        try:
+            print(f"Attempting to connect to database: {db_filename2}")
+            conn = sqlite3.connect(db_filename2)
+            cursor = conn.cursor()
+            print("Database connection established.")
+
+            # 查询数据
+            query = """
+            SELECT SourceName, Percentage 
+            FROM PollutionSources 
+            JOIN Pm10Percentage ON PollutionSources.SourceID = Pm10Percentage.SourceID
+            """
+            print(f"Executing query: {query}")
+            cursor.execute(query)
+            data = cursor.fetchall()
+            print(f"Fetched data: {data}")
+
+            if not data:
+                print("No data retrieved from the database.")
+                return None
+
+            # 拆分数据
+            labels = [row[0] for row in data]
+            sizes = [row[1] for row in data]
+            print(f"Labels: {labels}, Sizes: {sizes}")
+
+            # 绘制饼图
+            print("Creating pie chart...")
+            fig, ax = plt.subplots(figsize=(10, 7), facecolor=(1, 1, 1, 0.5))
+            explode = [0.1] * len(labels)
+            ax.pie(
+                sizes, explode=explode, labels=labels, autopct='%1.1f%%',
+                startangle=140, pctdistance=0.85
+            )
+            ax.axis('equal')
+            ax.legend(labels, loc='upper right', bbox_to_anchor=(1.2, 1))
+            ax.set_title('Pollution Sources Breakdown', fontsize=16, pad=24)
+            print("Pie chart created successfully.")
+
             return fig
 
+        except sqlite3.Error as e:
+            print(f"SQLite error: {e}")
+            return None
+
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            return None
+
+        finally:
+            if 'conn' in locals():
+                conn.close()
+                print("Database connection closed.")
+
+
+    @output
+    @render.plot
+    @reactive.event(input.action_button4)
+    def plot_source_contribution():
+        """
+        Plots a detailed contribution of pollution sources across different species.
+
+        Parameters:
+        - db_path: str, the path to the SQLite database.
+
+        Returns:
+        - fig: matplotlib.figure.Figure, the figure object containing the plots.
+        """
+        # Connect to SQLite database
+        conn = sqlite3.connect(db_filename2)
+        cursor = conn.cursor()
+
+        try:
+            # Fetch dynamic data from database
+            # Get all sources
+            cursor.execute("SELECT SourceID, SourceName FROM PollutionSources")
+            sources = cursor.fetchall()
+
+            # Get all species
+            cursor.execute("SELECT SpeciesID, Species FROM Species")
+            species_data = cursor.fetchall()
+
+            # Build species mapping and order
+            species_ids = [row[0] for row in species_data]
+            species_names = {row[0]: row[1] for row in species_data}
+
+            # Initialize data structure
+            data = {}
+
+            # Query data for each SourceID
+            for source_id, source_name in sources:
+                cursor.execute("""
+                SELECT SpeciesID, Concentration, Average, Error, Dispersion, Exceedance
+                FROM Measurement
+                WHERE SourceID = ?
+                """, (source_id,))
+                data[source_id] = {
+                    "name": source_name,
+                    "values": cursor.fetchall()
+                }
+
+        finally:
+            # Close the database connection
+            conn.close()
+
+        # Plot setup,缩小90%的比例
+        original_figsize = (10, len(sources) * 2)  # 原始大小
+        reduced_figsize = (original_figsize[0] * 0.55, original_figsize[1] * 0.55)  # 缩小60%
+        fig, axes = plt.subplots(len(sources), 1, figsize=reduced_figsize, sharex=True)
+        if len(sources) == 1:
+            axes = [axes]  # Ensure axes is iterable when there's only one source
+
+        x = np.arange(len(species_ids))  # Label locations
+        width = 0.75  # Width of the bars
+        fontsize = 8  # 设置y轴字体大小
+
+        # To keep track of whether to add the legend
+        first_plot = True
+
+        # Create handles for the legend to ensure only one set of legend items
+        legend_handles = []
+
+        for i, (source_id, source_info) in enumerate(data.items()):
+            ax = axes[i]
+            source_name = source_info["name"]
+            source_data = source_info["values"]
+
+            # Extract data for plotting
+            species_values = {row[0]: row[1:] for row in source_data}
+            concentration = [species_values.get(sid, (0, 0, 0, 0, 0))[0] for sid in species_ids]
+            average = [species_values.get(sid, (0, 0, 0, 0, 0))[1] for sid in species_ids]
+            error = [species_values.get(sid, (0, 0, 0, 0, 0))[2] for sid in species_ids]
+            dispersion = [species_values.get(sid, (0, 0, 0, 0, 0))[3] for sid in species_ids]
+            exceedance = [species_values.get(sid, (0, 0, 0, 0, 0))[4] for sid in species_ids]
+
+            # Logarithmic y-axis for concentration
+            ax.set_yscale('log')
+            ax.set_ylim([1e-4, 1])
+
+            # Format left y-axis ticks to display as scientific notation (10^0, 10^-2, etc.)
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f'$10^{{{int(np.log10(y))}}}$'))
+
+            # Right y-axis (percentage scale) for Exceedance
+            ax2 = ax.twinx()
+            ax2.set_ylim([0, 100])
+            ax2.set_yticks(np.arange(0, 101, 20))
+
+            # 设置y轴字体大小
+            ax.tick_params(axis='y', labelsize=fontsize)
+            ax2.tick_params(axis='y', labelsize=fontsize)
+
+            # Background vertical lines
+            for j in x:
+                ax.vlines(j, 1e-4, 1, colors='gray', linestyles='dashed', lw=0.5)
+
+            # Concentration bars
+            bars = ax.bar(x, concentration, width, color='lightblue', edgecolor='black')
+
+            # Error and Dispersion as vertical lines
+            line = []
+            for j in range(len(x)):
+                line.append(ax.plot([x[j], x[j]], [error[j], dispersion[j]], color='black', lw=1))
+
+            # Average as hollow dots
+            avg_line = ax.plot(x, average, color='red', marker='o', markersize=6, linestyle='', markerfacecolor='none')
+
+            # Exceedance as green dots
+            exceedance_line = ax2.plot(x, exceedance, color='green', marker='o', markersize=6, linestyle='')
+
+            # Add labels to the legend only for the first plot (for each source)
+            if first_plot:
+                # Create handles for the legend
+                legend_handles.append(bars[0])  # The light blue bars (Concentration)
+                legend_handles.append(avg_line[0])  # The red hollow dots (Average)
+                legend_handles.append(exceedance_line[0])  # The green dots (Exceedance)
+                legend_handles.append(line[0][0])  # The black lines (Maximum and minimum DISP values)
+
+                first_plot = False
+
+            # Set title for each subplot (top-right corner)
+            ax.text(1, 0.8, source_name, transform=ax.transAxes, ha='right', va='bottom', fontsize=10, weight='bold')
+
+            # Set the x-axis labels only for the last subplot
+            if i == len(sources) - 1:
+                ax.set_xticks(x)
+                ax.set_xticklabels([species_names[sid] for sid in species_ids], rotation=0)
+                ax.tick_params(axis='x', labelbottom=True)  # Only show x-axis labels for the last subplot
+            else:
+                ax.tick_params(axis='x', labelbottom=False)  # Hide x-axis labels for other subplots
+
+        # Add the legend on the left side of the entire figure (only once)
+        fig.legend(legend_handles, ['Concentration', 'Average', 'Exceedance', 'Maximum and Minimum DISP values'], 
+                loc='upper center', bbox_to_anchor=(0.5, 1.03), ncol=4, frameon=False)
+
+        # Adjust the layout to make space for the legend
+        plt.tight_layout()
+
+        return fig
 
 
 app = App(app_ui, server)
