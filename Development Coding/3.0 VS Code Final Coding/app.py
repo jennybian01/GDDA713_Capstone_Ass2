@@ -40,7 +40,6 @@ from p2.process_data_and_plot_p2 import (
     get_pm10_data,
     plot_pm10_trend,
     get_all_factors_data,
-    plot_all_factors_trend,
     elements_options,
 )
 from p3.process_data_and_plot_p3 import(
@@ -146,10 +145,13 @@ body {
     margin: 0 auto;
 }
 
+.custom-container {
+    width: 80%;  /* 设置宽度为页面宽度的 80% */
+    margin: 0 auto;  /* 水平居中 */
+}
+
 
 """
-
-
 
 
 
@@ -233,9 +235,10 @@ app_ui = ui.page_fluid(
                 ),
                 ui.nav_panel(
                     "Trend Analysis(All elements)",
-                    "Click the button to visualize the values of all elements over the years.",
-                    ui.input_action_button("action_button2", "Visualization"),
-                    ui.output_plot("all_factors_trend_plot"),
+                    "Choose an element to view its trend of all elements over the years.",
+                    ui.input_selectize(id="element_dropdown1", label="Select an Element:", choices=[]),
+                    ui.output_text_verbatim("selected_option1"),
+                    ui.output_plot("plot_trend_all_elements"),
                 ),
                 ui.nav_panel(
                     "Calendar Plot",
@@ -264,9 +267,15 @@ app_ui = ui.page_fluid(
                 ui.nav_panel("Pie Chart", "Visualize the sources contribution pie chart by clicking the button.",
                              ui.input_action_button("action_button3", "Visualization"),
                              ui.output_plot("plot_pie_chart")),
-                ui.nav_panel("Elements Contribution Plot", "Visualize the elements contribution plot by clicking the button.",
-                             ui.input_action_button("action_button4", "Visualization"),
-                             ui.output_plot("plot_source_contribution")),
+                ui.nav_panel(
+                    "Elements Contribution Plot",
+                    "Visualize the elements contribution plot by clicking the button.",
+                    ui.input_action_button("action_button4", "Visualization"),
+                    ui.div(
+                        ui.output_plot("plot_source_contribution", height="1200px"),
+                        style="width: 90%; margin: 0 auto;"  # 调整容器宽度
+                    ),
+                ),
             ),
         ),
         ui.nav_panel("About", 
@@ -300,6 +309,7 @@ app_ui = ui.page_fluid(
 
     ui.tags.style(css),  # Add CSS styles
 )
+
 
 
 dropdown_options = reactive.Value(elements_options)
@@ -565,7 +575,6 @@ def server(input, output, session):
     @reactive.event(input.action_button1)
     def pm10_trend_plot():
         if df_pm10() is None or df_pm10().empty:
-            # 返回空白图或警告文本
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.text(
                 0.5, 0.5, "No data available!", fontsize=16, ha="center", va="center"
@@ -577,15 +586,142 @@ def server(input, output, session):
 
     @output
     @render.plot
-    @reactive.event(input.action_button2)
+    @reactive.event(input.element_dropdown1)
     def all_factors_trend_plot():
+        # user select element
+        selected_element = input.element_dropdown1()
         df_all_factors = get_all_factors_data_reactive()
+
         if df_all_factors is not None and not df_all_factors.empty:
             print("Data for plotting:", df_all_factors.head(3))
-            return plot_all_factors_trend(df_all_factors)
+            
+            # when user select element
+            if selected_element and selected_element != "":
+                df_selected = df_all_factors[df_all_factors["elements"] == selected_element]
+                if not df_selected.empty:
+                    return plot_selected_element_trend(df_selected, selected_element=selected_element)
+                else:
+                    return px.line(title=f"No data available for {selected_element}")
+            else:
+                # When user does not select an element, default to PM10
+                if "PM10" in df_all_factors["elements"].unique():
+                    df_pm10 = df_all_factors[df_all_factors["elements"] == "PM10"]
+                    return plot_selected_element_trend(df_pm10, selected_element="PM10")
+                else:
+                    print("PM10 data not available. Plotting all elements instead.")
+                    return plot_selected_element_trend(df_all_factors)
+
+
         else:
             print("No valid data available for plotting.")
             return px.line(title="No data available")
+        
+    @reactive.Effect
+    def update_new_dropdown():
+        """
+        dynamic update elements list (element_dropdown1)。
+        """
+        df_all_factors = get_all_factors_data_reactive()
+        if df_all_factors is None or df_all_factors.empty:
+            print("No data available for dropdown.")
+            ui.update_selectize("element_dropdown1", choices=[])
+            return
+
+        # extract elements options
+        options = elements_options(df_all_factors)
+        print("Updating dropdown options:", options)
+        ui.update_selectize("element_dropdown1", choices=options)
+
+
+    @output
+    @render.plot
+    def plot_trend_all_elements():
+        """
+        accroding to the dropdown selection, plot the trend of all elements or a specific element.
+        default is pm10
+        """
+        # obtain reactive value
+        df_all_factors = get_all_factors_data_reactive()
+        selected_element = input.element_dropdown1()
+
+        if df_all_factors is None or df_all_factors.empty:
+            print("No data available.")
+            return px.line(title="No data available")
+
+        if not selected_element:  # if no element selected
+            print("No element selected. Defaulting to PM10.")
+            # check if PM10 data is available
+            if "PM10" in df_all_factors["elements"].unique():
+                df_pm10 = df_all_factors[df_all_factors["elements"] == "PM10"]
+                return plot_selected_element_trend(df_pm10, selected_element="PM10")
+            else:
+                print("PM10 data not available. Plotting all elements instead.")
+                return plot_selected_element_trend(df_all_factors)
+
+        # if element selected
+        print(f"Selected element: {selected_element}")
+        df_selected = df_all_factors[df_all_factors["elements"] == selected_element]
+        if not df_selected.empty:
+            return plot_selected_element_trend(df_selected, selected_element=selected_element)
+        else:
+            print(f"No data available for element: {selected_element}.")
+            return px.line(title=f"No data available for {selected_element}")
+        
+
+    def plot_selected_element_trend(df_all_factors, selected_element=None):
+        """
+        accroding to the dropdown selection, plot the trend of a specific element.
+
+        """
+        import matplotlib.pyplot as plt
+        from cycler import cycler
+
+        # create a figure and axis
+        fig, ax = plt.subplots(figsize=(16, 10))
+        ax.set_prop_cycle(cycler('color', plt.cm.tab20.colors))  # ensure color uniqueness
+
+        # process data
+        df_all_factors['date'] = pd.to_datetime(df_all_factors['date'])
+        df_all_factors['Year'] = df_all_factors['date'].dt.year
+        df_all_factors['yearly_avg'] = df_all_factors.groupby(['Year', 'elements'])['contribution_value'].transform('mean')
+
+        # if selected element
+        if selected_element:
+            df_selected = df_all_factors[df_all_factors['elements'] == selected_element]
+            ax.plot(
+                df_selected['Year'],
+                df_selected['yearly_avg'],
+                marker='o', linestyle='-', label=selected_element
+            )
+            ax.set_title(f"Yearly Average Contribution Values for {selected_element}", fontsize=14)
+        else:
+            # if no element selected, default to PM10
+            if "PM10" in df_all_factors["elements"].unique():
+                print("No specific element selected. Defaulting to PM10.")
+                pm10_data = df_all_factors[df_all_factors['elements'] == "PM10"]
+                ax.plot(
+                    pm10_data['Year'], 
+                    pm10_data['yearly_avg'], 
+                    marker='o', linestyle='-', label="PM10"
+                )
+                ax.set_title("Yearly Average Contribution Values for PM10", fontsize=14)
+            else:
+                print("PM10 data not available. Unable to plot default.")
+                ax.set_title("No data available for PM10", fontsize=14)
+
+        # set labels and title
+        ax.set_xlabel("Year", fontsize=12)
+        ax.set_ylabel("Yearly Average Contribution Values", fontsize=12)
+        ax.grid(True)
+        ax.legend(
+            title='Element', loc='upper center', 
+            bbox_to_anchor=(0.5, -0.15), frameon=False, fontsize=8, ncol=15
+        )
+        fig.subplots_adjust(bottom=0.2)
+
+        return fig
+    
+
 
     @reactive.Effect
     def log_communication():
@@ -596,7 +732,7 @@ def server(input, output, session):
     @reactive.Effect
     def update_dropdown():
         """
-        动态更新下拉选项。
+        update dropdown options based on the reactive value.
         """
         df_all_factors = get_all_factors_data_reactive()
         if df_all_factors is None:
@@ -610,42 +746,42 @@ def server(input, output, session):
 
 
 
-    # 1. 核心绘图逻辑：独立的函数
+    # 1. core logic : create an indipendance function
     def generate_calendar_plot(df_all_factors, selected_element):
-        # 筛选所需数据
+        # select data
         df_data = df_all_factors[df_all_factors["elements"] == selected_element]
         if df_data.empty:
             print(f"No data available for element: {selected_element}")
             return None
-
+ 
         try:
-            # 确保日期列是日期类型
+            # ensure date type
             df_data["date"] = pd.to_datetime(df_data["date"], errors="coerce")
             df_data["year"] = df_data["date"].dt.year
             df_data["month"] = df_data["date"].dt.month
 
-            # 按年和月聚合数据
+            # aggregate data by year and month
             df_agg = (
                 df_data.groupby(["year", "month"])["contribution_value"]
                 .sum()
                 .reset_index()
             )
 
-            # 转为透视表
+            # convert to pivot table
             df_agg_pivot = df_agg.pivot(index="month", columns="year", values="contribution_value")
-            df_agg_pivot = df_agg_pivot.fillna(0)  # 填充空值为0
+            df_agg_pivot = df_agg_pivot.fillna(0)  # fill na value as 0
 
-            # 设置画布和颜色映射
+            # setting canva and colour
             fig, ax = plt.subplots(figsize=(12, 8))
             heatmap = ax.imshow(df_agg_pivot, cmap="YlGnBu", aspect="auto")
 
-            # 添加刻度标签
+            # adding lables and ticks
             ax.set_xticks(np.arange(df_agg_pivot.shape[1]))
             ax.set_yticks(np.arange(df_agg_pivot.shape[0]))
             ax.set_xticklabels(df_agg_pivot.columns, rotation=45)
             ax.set_yticklabels(df_agg_pivot.index)
 
-            # 标注每个单元格
+            # marked for each unit points
             for i in range(df_agg_pivot.shape[0]):
                 for j in range(df_agg_pivot.shape[1]):
                     text = ax.text(
@@ -658,37 +794,37 @@ def server(input, output, session):
                         fontsize=8,
                     )
 
-            # 添加标题和色条
+            # title and colour
             ax.set_title(f"Monthly Heatmap for {selected_element}", fontsize=16)
             ax.set_xlabel("Year", fontsize=12)
             ax.set_ylabel("Month", fontsize=12)
             fig.colorbar(heatmap, ax=ax, label="Contribution Value")
 
-            return fig  # 返回 Matplotlib 图形对象
+            return fig  # return matplotlib fig
         except Exception as e:
             print(f"Error during plotting: {e}")
             return None
 
 
-    # 2. 渲染逻辑：无参数
+    # 2. Rendering logic: with no parameters
     @output
     @render.plot
     def plot_calendar_new():
-        # 获取反应式数据
+        # obtain reactive value
         df_all_factors = get_all_factors_data_reactive()
         selected_element = input.element_dropdown()
 
         if not selected_element or df_all_factors is None or df_all_factors.empty:
             print("No data or element selected.")
-            return None  # 避免绘制空内容
+            return None  # advoid empty value
 
-        # 调用绘图函数
+        # use the above print function
         fig = generate_calendar_plot(df_all_factors, selected_element)
         if fig is None:
             print("Failed to generate plot.")
             return None
 
-        return fig  # 直接返回 Matplotlib 图形对象
+        return fig  # return matplotlib fig
 
 
 
@@ -820,23 +956,14 @@ def server(input, output, session):
     @render.plot
     @reactive.event(input.action_button3)
     def plot_pie_chart():
-        """
-        绘制显示污染来源 PM10 百分比的饼图。
-
-        参数:
-        - db_filename2: str, SQLite 数据库路径。
-
-        返回:
-        - fig: matplotlib.figure.Figure, 包含饼图的图像对象。
-        """
-        print("Starting plot_pie_chart...")  # 调试起点
+        print("Starting plot_pie_chart...")  # to indicate this unit has been initiated.
         try:
             print(f"Attempting to connect to database: {db_filename2}")
             conn = sqlite3.connect(db_filename2)
             cursor = conn.cursor()
             print("Database connection established.")
 
-            # 查询数据
+            # aggegrate data
             query = """
             SELECT SourceName, Percentage 
             FROM PollutionSources 
@@ -851,21 +978,29 @@ def server(input, output, session):
                 print("No data retrieved from the database.")
                 return None
 
-            # 拆分数据
+            
             labels = [row[0] for row in data]
             sizes = [row[1] for row in data]
             print(f"Labels: {labels}, Sizes: {sizes}")
 
-            # 绘制饼图
+            # create pie chart
             print("Creating pie chart...")
-            fig, ax = plt.subplots(figsize=(10, 7), facecolor=(1, 1, 1, 0.5))
+            fig, ax = plt.subplots(figsize=(12, 7), facecolor=(1, 1, 1, 0.5))
             explode = [0.1] * len(labels)
+
+            
             ax.pie(
-                sizes, explode=explode, labels=labels, autopct='%1.1f%%',
-                startangle=140, pctdistance=0.85
+                sizes, 
+                explode=explode, 
+                labels=None,  
+                autopct='%1.1f%%',  # shows % 
+                startangle=140, 
+                pctdistance=1.2,  
+                textprops={'fontsize': 8} 
             )
-            ax.axis('equal')
-            ax.legend(labels, loc='upper right', bbox_to_anchor=(1.2, 1))
+            
+            # adding legend
+            ax.legend(labels, loc='upper left', bbox_to_anchor=(1.2, 1.2),ncol=1, fontsize=8)
             ax.set_title('Pollution Sources Breakdown', fontsize=16, pad=24)
             print("Pie chart created successfully.")
 
@@ -889,15 +1024,7 @@ def server(input, output, session):
     @render.plot
     @reactive.event(input.action_button4)
     def plot_source_contribution():
-        """
-        Plots a detailed contribution of pollution sources across different species.
 
-        Parameters:
-        - db_path: str, the path to the SQLite database.
-
-        Returns:
-        - fig: matplotlib.figure.Figure, the figure object containing the plots.
-        """
         # Connect to SQLite database
         conn = sqlite3.connect(db_filename2)
         cursor = conn.cursor()
@@ -935,16 +1062,16 @@ def server(input, output, session):
             # Close the database connection
             conn.close()
 
-        # Plot setup,缩小90%的比例
-        original_figsize = (10, len(sources) * 2)  # 原始大小
-        reduced_figsize = (original_figsize[0] * 0.55, original_figsize[1] * 0.55)  # 缩小60%
+        # Plot setup
+        original_figsize = (10, len(sources) * 2)  # original size
+        reduced_figsize = (original_figsize[0] * 0.55, original_figsize[1] * 0.55)  
         fig, axes = plt.subplots(len(sources), 1, figsize=reduced_figsize, sharex=True)
         if len(sources) == 1:
             axes = [axes]  # Ensure axes is iterable when there's only one source
 
         x = np.arange(len(species_ids))  # Label locations
         width = 0.75  # Width of the bars
-        fontsize = 8  # 设置y轴字体大小
+        fontsize = 8 
 
         # To keep track of whether to add the legend
         first_plot = True
@@ -977,7 +1104,7 @@ def server(input, output, session):
             ax2.set_ylim([0, 100])
             ax2.set_yticks(np.arange(0, 101, 20))
 
-            # 设置y轴字体大小
+            # y axis setting
             ax.tick_params(axis='y', labelsize=fontsize)
             ax2.tick_params(axis='y', labelsize=fontsize)
 
@@ -1022,7 +1149,7 @@ def server(input, output, session):
 
         # Add the legend on the left side of the entire figure (only once)
         fig.legend(legend_handles, ['Concentration', 'Average', 'Exceedance', 'Maximum and Minimum DISP values'], 
-                loc='upper center', bbox_to_anchor=(0.5, 1.03), ncol=4, frameon=False)
+                loc='upper center', bbox_to_anchor=(0.5, 1), ncol=4, frameon=False)
 
         # Adjust the layout to make space for the legend
         plt.tight_layout()

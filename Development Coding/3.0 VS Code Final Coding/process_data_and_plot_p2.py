@@ -314,66 +314,7 @@ def get_all_factors_data(db_filename1):
 
 
 
-def plot_all_factors_trend(df_all_factors):
-    """
-    plot yearly trend, shows all elements trend line, only top 5 value shows their names.
 
-    df_all_factors (DataFrame): includes 'elements', 'date', 和 'contribution_value' columns。
-
-    return：
-    fig (Figure): Matplotlib 。
-    """
-    # create a plot and assign each colour represents an element, and do not repeat
-    fig, ax = plt.subplots(figsize=(24, 15))
-    ax.set_prop_cycle(cycler('color', plt.cm.tab20.colors))  # 确保颜色不重复
-
-    # proecess data
-    df_all_factors['date'] = pd.to_datetime(df_all_factors['date'])
-    df_all_factors['Year'] = df_all_factors['date'].dt.year
-    df_all_factors['yearly_avg'] = df_all_factors.groupby(['Year', 'elements'])['contribution_value'].transform('mean')
-
-    # extract top 5 value elements
-    top_elements = (
-        df_all_factors.groupby('elements')['yearly_avg'].max()
-        .nlargest(5).index
-    )
-
-    # print trendline
-    for element in df_all_factors['elements'].unique():
-        element_data = df_all_factors[df_all_factors['elements'] == element]
-        ax.plot(
-            element_data['Year'], 
-            element_data['yearly_avg'], 
-            marker='o', linestyle='-', label=element
-        )
-
-        # show top five elements names
-        if element in top_elements:
-            first_year = element_data['Year'].iloc[0]
-            first_avg = element_data['yearly_avg'].iloc[0]
-            ax.text(
-                first_year - 0.5, first_avg, element,  # 偏移让名称在曲线左方
-                fontsize=10, ha='right', va='center', fontweight='bold', alpha=0.8
-            )
-
-    # plot setting
-    ax.set_title("Yearly Average Contribution Values for All Elements", fontsize=14)
-    ax.set_xlabel("Year", fontsize=12)
-    ax.set_ylabel("Yearly Average Contribution Values", fontsize=12)
-    
-    # layout
-    fig.subplots_adjust(bottom=0.2)  # can be adjusted.
-
-    # legend setting
-    ax.legend(
-        title='Element', loc='upper center', 
-        bbox_to_anchor=(0.5, -0.2), frameon=False, fontsize=8, ncol=15
-    )
-    
-    ax.grid(True)
-
-
-    return fig
 
 
 def elements_options(df_all_factors):
